@@ -459,141 +459,130 @@
   }
 
   // ── Employee: progress ring ────────────────────────────────
-  let window_allEmployees = [];
-  let window_allTasks = [];
-
+  let allEmployees = [];
+  let allEmpTasksData = [];
   async function loadEmployeeProgress() {
-    try {
-      if (user.role !== "employee") {
-        // Manager/Admin - Load all employees progress
-        const { data: employees, error: empErr } = await supabase.from("users").select("id, name, role").eq("role","employee").order("name");
-        const { data: tasks, error: taskErr } = await supabase.from("tasks").select("id, status, assigned_to");
-        
-        if (empErr) { console.error("Employee load error:", empErr); return; }
-        if (taskErr) { console.error("Task load error:", taskErr); return; }
+    if (user.role !== "employee") {
+      const el = document.getElementById("employeeProgressList");
+      el.innerHTML = `<div style="text-align:center;padding:24px"><span class="spinner"></span></div>`;
 
-        const el = document.getElementById("employeeProgressList");
-        if (!el) return;
-        
-        if (!employees?.length) { 
-          el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--gray-400)">No employees found.</div>`; 
-          return; 
-        }
+      const [{ data: employees, error: empErr }, { data: tasks, error: taskErr }] = await Promise.all([
+        supabase.from("users").select("id, name, role").eq("role","employee").order("name"),
+        supabase.from("tasks").select("id, status, assigned_to")
+      ]);
 
-        window_allEmployees = employees;
-        window_allTasks = tasks || [];
-        
-        // Populate filter dropdown
-        const filterSelect = document.getElementById("assignedToFilter");
-        if (filterSelect) {
-          // Clear existing options (keep "All Employees")
-          const options = filterSelect.querySelectorAll("option");
-          options.forEach((opt, idx) => { if (idx > 0) opt.remove(); });
-          
-          employees.forEach(emp => {
-            const opt = document.createElement("option");
-            opt.value = emp.id;
-            opt.textContent = emp.name;
-            filterSelect.appendChild(opt);
-          });
-          
-          filterSelect.onchange = () => renderEmployeeProgress();
-        }
+      if (empErr) console.error("Employee fetch error:", empErr);
+      if (taskErr) console.error("Task fetch error:", taskErr);
 
-        renderEmployeeProgress();
+      if (!employees?.length) {
+        el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--gray-400)">No employees found.</div>`;
         return;
       }
 
-      // Employee - Load own progress
-      const { data: myTasks } = await supabase.from("tasks").select("status").eq("assigned_to", user.id);
-      const total     = myTasks?.length || 0;
-      const pending   = myTasks?.filter(t => t.status === "pending").length || 0;
-      const inProg    = myTasks?.filter(t => t.status === "in_progress").length || 0;
-      const completed = myTasks?.filter(t => t.status === "completed").length || 0;
-      const pct       = total ? Math.round((completed / total) * 100) : 0;
+      allEmployees = employees;
+      allEmpTasksData = tasks || [];
 
-      document.getElementById("empStatPending").textContent  = pending;
-      document.getElementById("empStatProgress").textContent = inProg;
-      document.getElementById("empStatDone").textContent     = completed;
-      document.getElementById("miniPending").textContent  = pending;
-      document.getElementById("miniProgress").textContent = inProg;
-      document.getElementById("miniDone").textContent     = completed;
+      // Populate filter dropdown
+      const filterSelect = document.getElementById("assignedToFilter");
+      if (filterSelect) {
+        // Clear existing options first (except "All Employees")
+        filterSelect.innerHTML = `<option value="">All Employees</option>`;
+        employees.forEach(emp => {
+          const opt = document.createElement("option");
+          opt.value = emp.id;
+          opt.textContent = emp.name;
+          filterSelect.appendChild(opt);
+        });
+        filterSelect.addEventListener("change", () => renderEmployeeProgress(allEmployees, allEmpTasksData));
+      }
 
-      document.getElementById("welcomeChips").innerHTML = `
-        <div class="dash-chip"><span>Active: </span><strong>${inProg}</strong></div>
-        <div class="dash-chip"><span>Done today: </span><strong>${completed}</strong></div>`;
-
-      const circumference = 226.2;
-      const offset = circumference - (pct / 100) * circumference;
-      const ring = document.getElementById("progressRingFill");
-      if (ring) setTimeout(() => { ring.style.strokeDashoffset = offset; }, 100);
-      const pctEl = document.getElementById("progressRingPct");
-      if (pctEl) pctEl.textContent = pct + "%";
-    } catch (err) {
-      console.error("loadEmployeeProgress error:", err);
+      renderEmployeeProgress(allEmployees, allEmpTasksData);
+      return;
     }
+
+    const { data: myTasks } = await supabase.from("tasks").select("status").eq("assigned_to", user.id);
+    const total     = myTasks?.length || 0;
+    const pending   = myTasks?.filter(t => t.status === "pending").length || 0;
+    const inProg    = myTasks?.filter(t => t.status === "in_progress").length || 0;
+    const completed = myTasks?.filter(t => t.status === "completed").length || 0;
+    const pct       = total ? Math.round((completed / total) * 100) : 0;
+
+    document.getElementById("empStatPending").textContent  = pending;
+    document.getElementById("empStatProgress").textContent = inProg;
+    document.getElementById("empStatDone").textContent     = completed;
+    document.getElementById("miniPending").textContent  = pending;
+    document.getElementById("miniProgress").textContent = inProg;
+    document.getElementById("miniDone").textContent     = completed;
+
+    document.getElementById("welcomeChips").innerHTML = `
+      <div class="dash-chip"><span>Active: </span><strong>${inProg}</strong></div>
+      <div class="dash-chip"><span>Done today: </span><strong>${completed}</strong></div>`;
+
+    const circumference = 226.2;
+    const offset = circumference - (pct / 100) * circumference;
+    const ring = document.getElementById("progressRingFill");
+    if (ring) setTimeout(() => { ring.style.strokeDashoffset = offset; }, 100);
+    const pctEl = document.getElementById("progressRingPct");
+    if (pctEl) pctEl.textContent = pct + "%";
   }
 
-  function renderEmployeeProgress() {
-    try {
-      const filterValue = document.getElementById("assignedToFilter")?.value || "";
-      let filteredEmployees = window_allEmployees;
-      
-      if (filterValue) {
-        filteredEmployees = window_allEmployees.filter(e => e.id === filterValue);
-      }
-
-      const el = document.getElementById("employeeProgressList");
-      if (!el) return;
-      
-      const avatarCls = ["av-blue","av-violet","av-emerald","av-amber","av-rose","av-cyan"];
-      
-      if (!filteredEmployees.length) {
-        el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--gray-400)">No employees to display.</div>`;
-        return;
-      }
-      
-      el.innerHTML = filteredEmployees.map((emp, i) => {
-        const empTasks = window_allTasks?.filter(t => t.assigned_to === emp.id) || [];
-        const p = empTasks.filter(t => t.status==="pending").length;
-        const a = empTasks.filter(t => t.status==="in_progress").length;
-        const c = empTasks.filter(t => t.status==="completed").length;
-        const tot = empTasks.length;
-        const pctP = tot ? Math.round((p/tot)*100) : 0;
-        const pctA = tot ? Math.round((a/tot)*100) : 0;
-        const pctC = tot ? Math.round((c/tot)*100) : 0;
-        const rate = tot ? Math.round((c/tot)*100) : 0;
-        const av = avatarCls[i % avatarCls.length];
-        
-        return `
-          <div class="emp-progress-item">
-            <div class="emp-progress-top">
-              <div class="emp-progress-name-row">
-                <div class="emp-avatar ${av}">${initials(emp.name)}</div>
-                <div>
-                  <div class="emp-name">${emp.name}</div>
-                  <div class="emp-role">${tot} task${tot!==1?"s":""} · ${rate}% complete</div>
-                </div>
-              </div>
-              <div class="emp-stats-pills">
-                <span class="emp-pill emp-pill-p">${p}P</span>
-                <span class="emp-pill emp-pill-a">${a}A</span>
-                <span class="emp-pill emp-pill-c">${c}C</span>
-                <span class="emp-pct">${rate}%</span>
-              </div>
-            </div>
-            <div class="emp-bar-track">
-              <div class="emp-bar-inner">
-                ${pctP > 0 ? `<div class="emp-bar-p" style="width:${pctP}%"></div>` : ""}
-                ${pctA > 0 ? `<div class="emp-bar-a" style="width:${pctA}%"></div>` : ""}
-                ${pctC > 0 ? `<div class="emp-bar-c" style="width:${pctC}%"></div>` : ""}
-              </div>
-            </div>
-          </div>`;
-      }).join("");
-    } catch (err) {
-      console.error("renderEmployeeProgress error:", err);
+  function renderEmployeeProgress(employees, tasks) {
+    const filterValue = document.getElementById("assignedToFilter")?.value || "";
+    let filteredEmployees = employees;
+    
+    if (filterValue) {
+      filteredEmployees = employees.filter(e => e.id === filterValue);
     }
+
+    const el = document.getElementById("employeeProgressList");
+    const avatarCls = ["av-blue","av-violet","av-emerald","av-amber","av-rose","av-cyan"];
+    
+    if (!filteredEmployees.length) {
+      el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--gray-400)">No employees found.</div>`;
+      return;
+    }
+
+    el.innerHTML = filteredEmployees.map((emp, i) => {
+      const empTasks = (tasks || []).filter(t => t.assigned_to === emp.id);
+      const p = empTasks.filter(t => t.status==="pending").length;
+      const a = empTasks.filter(t => t.status==="in_progress").length;
+      const c = empTasks.filter(t => t.status==="completed").length;
+      const tot = empTasks.length;
+      const pctP = tot ? Math.round((p/tot)*100) : 0;
+      const pctA = tot ? Math.round((a/tot)*100) : 0;
+      const pctC = tot ? Math.round((c/tot)*100) : 0;
+      const rate = tot ? Math.round((c/tot)*100) : 0;
+      const av = avatarCls[i % avatarCls.length];
+
+      // Build bar: if no tasks, show a grey "no tasks" bar
+      const barHtml = tot === 0
+        ? `<div style="width:100%;background:var(--gray-200);height:100%;border-radius:20px"></div>`
+        : `${pctP > 0 ? `<div class="emp-bar-p" style="width:${pctP}%"></div>` : ""}
+           ${pctA > 0 ? `<div class="emp-bar-a" style="width:${pctA}%"></div>` : ""}
+           ${pctC > 0 ? `<div class="emp-bar-c" style="width:${pctC}%"></div>` : ""}`;
+
+      return `
+        <div class="emp-progress-item">
+          <div class="emp-progress-top">
+            <div class="emp-progress-name-row">
+              <div class="emp-avatar ${av}">${initials(emp.name)}</div>
+              <div>
+                <div class="emp-name">${emp.name}</div>
+                <div class="emp-role">${tot === 0 ? "No tasks assigned" : `${tot} task${tot!==1?"s":""} · ${rate}% complete`}</div>
+              </div>
+            </div>
+            <div class="emp-stats-pills">
+              <span class="emp-pill emp-pill-p">${p}P</span>
+              <span class="emp-pill emp-pill-a">${a}A</span>
+              <span class="emp-pill emp-pill-c">${c}C</span>
+              <span class="emp-pct">${tot === 0 ? "—" : rate + "%"}</span>
+            </div>
+          </div>
+          <div class="emp-bar-track">
+            <div class="emp-bar-inner">${barHtml}</div>
+          </div>
+        </div>`;
+    }).join("");
   }
 
   // ── Employee: task list ────────────────────────────────────
