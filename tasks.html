@@ -91,6 +91,9 @@
             <option value="in_progress">In Progress</option>
             <option value="completed">Completed</option>
           </select>
+          <select id="filterAssignee" style="width:160px;padding:10px 12px;display:none">
+            <option value="">All employees</option>
+          </select>
         </div>
         <div>
           <button class="btn btn-primary hidden" id="newTaskBtn" onclick="openModal()">
@@ -142,6 +145,14 @@
     const { data: employees } = await supabase.from("users").select("id,name").in("role", ["employee","manager"]);
     const sel = document.getElementById("taskAssignee");
     employees?.forEach(e => { const o = new Option(e.name, e.id); sel.appendChild(o); });
+
+    // Populate + show the Assigned To filter dropdown
+    const filterAssignee = document.getElementById("filterAssignee");
+    filterAssignee.style.display = "";
+    employees?.forEach(e => {
+      const o = new Option(e.name, e.id);
+      filterAssignee.appendChild(o);
+    });
   } else {
     document.getElementById("assigneeGroup").style.display = "none";
   }
@@ -217,14 +228,17 @@
   function applyFilters() {
     const q   = document.getElementById("searchInput").value.toLowerCase();
     const st  = document.getElementById("filterStatus").value;
+    const assignee = document.getElementById("filterAssignee").value;
     const filtered = window.allTasks.filter(t =>
       (!q  || t.title.toLowerCase().includes(q) || (t.description||"").toLowerCase().includes(q)) &&
-      (!st || t.status === st)
+      (!st || t.status === st) &&
+      (!assignee || t.assigned_to?.id === assignee)
     );
     renderTasks(filtered);
   }
   document.getElementById("searchInput").addEventListener("input", applyFilters);
   document.getElementById("filterStatus").addEventListener("change", applyFilters);
+  document.getElementById("filterAssignee").addEventListener("change", applyFilters);
 
   // ── Modal helpers ──────────────────────────────────────────
   window.openModal  = (task = null) => {
