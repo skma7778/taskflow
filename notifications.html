@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow – Notifications</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="toast"></div>
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main-content">
+    <header class="topbar">
+      <button class="hamburger" id="menuToggle">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div style="flex:1">
+        <div class="topbar-title">Notifications</div>
+        <div class="topbar-subtitle">Stay updated on tasks and team activity</div>
+      </div>
+      <button class="btn btn-outline btn-sm" id="markAllBtn" onclick="markAllRead()">Mark all read</button>
+    </header>
+    <main class="page-content">
+      <div id="notifList" style="max-width:720px">
+        <div style="text-align:center;padding:40px"><span class="spinner"></span></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Hidden audio element for notification tone -->
+<audio id="notificationAudio" preload="auto">
+  <source src="data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==" type="audio/wav">
+</audio>
+
+<script type="module">
+  import { supabase } from "./supabase.js";
+  import { requireAuth, buildSidebar, initMobileMenu, initNotifPopup, timeAgo, toast } from "./app.js";
+
+  const user = await requireAuth();
+  if (!user) throw new Error();
+  buildSidebar(user, "notifications.html");
+  initMobileMenu();
+  initNotifPopup(user);
+
+  // Create notification sound (simple beep tone)
+  function createNotificationSound() {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+
+    const ctx = new AudioContext();
+    const now = ctx.currentTime;
+
+    // Create a simple pleasant notification tone
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.setValueAtTime(600, now + 0.1);
+
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+
+    osc.start(now);
+    osc.stop(now + 0.5);
+  }
+
+  // Play notification sound
+  window.playNotificationSound = () => {
+    try {
+      createNotificationSound();
+    } catch (e) {
+      console.log("Notification sound: ", e.message);
+    }
+  };
+
+  async function load() {
+    const { data } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    const el = document.getElementById("notifList");
+    if (!data?.length) {
+      el.innerHTML = `<div class="empty">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+        <div class="empty-title">All caught up!</div>
+        <div class="empty-text">You have no notifications right now.</div>
+      </div>`;
+      return;
+    }
+
+    el.innerHTML = data.map(n => `
+      <div class="notif-item ${n.is_read ? "" : "unread"}" id="notif_${n.id}" onclick="markRead('${n.id}')" style="cursor:${n.is_read ? 'default' : 'pointer'}">
+        <div class="notif-dot ${n.is_read ? "read" : ""}"></div>
+        <div style="flex:1">
+          <div class="notif-text">${n.message}</div>
+          <div class="notif-time">${timeAgo(n.created_at)}</div>
+        </div>
+        ${!n.is_read ? `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();markRead('${n.id}')">Mark read</button>` : ""}
+      </div>
+    `).join("");
+  }
+
+  window.markRead = async (id) => {
+    const item = document.getElementById(`notif_${id}`);
+    if (item && item.classList.contains("unread")) {
+      await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+      toast("Marked as read.");
+      load();
+    }
+  };
+
+  window.markAllRead = async () => {
+    await supabase.from("notifications").update({ is_read: true }).eq("user_id", user.id).eq("is_read", false);
+    toast("All notifications marked as read.");
+    load();
+  };
+
+  // Realtime: auto-reload when new notification arrives and play sound
+  supabase
+    .channel(`notif-page-${user.id}`)
+    .on("postgres_changes", {
+      event: "INSERT",
+      schema: "public",
+      table: "notifications",
+      filter: `user_id=eq.${user.id}`
+    }, () => {
+      playNotificationSound();
+      load();
+    })
+    .subscribe();
+
+  load();
+</script>
+</body>
+</html>

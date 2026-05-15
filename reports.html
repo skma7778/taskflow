@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow – Reports</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="toast"></div>
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main-content">
+    <header class="topbar">
+      <button class="hamburger" id="menuToggle">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div>
+        <div class="topbar-title">Reports</div>
+        <div class="topbar-subtitle">Export task data as CSV</div>
+      </div>
+    </header>
+    <main class="page-content">
+      <div class="card" style="max-width:700px;margin-bottom:24px">
+        <div class="card-title">Generate Report</div>
+        <div class="card-subtitle">Select a period and download task data as a CSV file</div>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <select id="periodSelect" style="width:180px;padding:10px 12px">
+            <option value="weekly">Last 7 days</option>
+            <option value="monthly">Last 30 days</option>
+            <option value="all">All time</option>
+          </select>
+          <button class="btn btn-primary" id="loadBtn" onclick="loadReport()">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            Load Preview
+          </button>
+          <button class="btn btn-success hidden" id="downloadBtn" onclick="downloadCSV()">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Download CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- Summary cards -->
+      <div id="summaryCards" class="stats-grid" style="display:none;max-width:700px"></div>
+
+      <!-- Preview table -->
+      <div id="previewTable" class="table-wrap" style="display:none;margin-top:20px">
+        <div class="table-header">
+          <div class="table-header-title">Task Report Preview</div>
+          <span id="recordCount" style="font-size:13px;color:var(--gray-500)"></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Title</th>
+              <th>Status</th>
+              <th>Assigned To</th>
+              <th>Deadline</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="reportBody"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script type="module">
+  import { supabase } from "./supabase.js";
+  import { requireAuth, buildSidebar, initMobileMenu, initNotifPopup, statusBadge, formatDate, toast } from "./app.js";
+
+  const user = await requireAuth(["admin","manager"]);
+  if (!user) throw new Error();
+  buildSidebar(user, "reports.html");
+  initMobileMenu();
+  initNotifPopup(user);
+
+  let reportData = [];
+
+  window.loadReport = async () => {
+    const period  = document.getElementById("periodSelect").value;
+    const loadBtn = document.getElementById("loadBtn");
+    loadBtn.disabled = true; loadBtn.innerHTML = `<span class="spinner"></span> Loading…`;
+
+    let query = supabase.from("tasks")
+      .select("id, title, status, deadline, created_at, assigned_to(name), assigned_by(name)")
+      .order("created_at", { ascending: false });
+
+    if (period !== "all") {
+      const days = period === "weekly" ? 7 : 30;
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      query = query.gte("created_at", cutoff.toISOString());
+    }
+
+    const { data, error } = await query;
+    loadBtn.disabled = false; loadBtn.textContent = "Load Preview";
+
+    if (error) { toast(error.message, "error"); return; }
+    reportData = data || [];
+
+    const total     = reportData.length;
+    const pending   = reportData.filter(t => t.status === "pending").length;
+    const progress  = reportData.filter(t => t.status === "in_progress").length;
+    const completed = reportData.filter(t => t.status === "completed").length;
+
+    document.getElementById("summaryCards").style.display = "grid";
+    document.getElementById("summaryCards").innerHTML = `
+      <div class="stat-card stat-blue"><div class="stat-label">Total</div><div class="stat-value">${total}</div></div>
+      <div class="stat-card stat-yellow"><div class="stat-label">Pending</div><div class="stat-value">${pending}</div></div>
+      <div class="stat-card stat-blue"><div class="stat-label">In Progress</div><div class="stat-value">${progress}</div></div>
+      <div class="stat-card stat-green"><div class="stat-label">Completed</div><div class="stat-value">${completed}</div></div>
+    `;
+
+    document.getElementById("previewTable").style.display = "";
+    document.getElementById("recordCount").textContent = `${total} record${total !== 1 ? "s" : ""}`;
+    document.getElementById("reportBody").innerHTML = reportData.map((t, i) => `
+      <tr>
+        <td style="color:var(--gray-400)">${i + 1}</td>
+        <td style="font-weight:600">${t.title}</td>
+        <td>${statusBadge(t.status)}</td>
+        <td>${t.assigned_to?.name || "—"}</td>
+        <td>${formatDate(t.deadline)}</td>
+        <td style="color:var(--gray-500)">${formatDate(t.created_at)}</td>
+      </tr>
+    `).join("");
+
+    document.getElementById("downloadBtn").classList.remove("hidden");
+  };
+
+  window.downloadCSV = () => {
+    if (!reportData.length) { toast("Load a report first.", "error"); return; }
+
+    const headers = ["ID","Title","Status","Assigned To","Assigned By","Deadline","Created At"];
+    const rows = reportData.map(t => [
+      t.id,
+      `"${(t.title || "").replace(/"/g,'""')}"`,
+      t.status,
+      t.assigned_to?.name || "",
+      t.assigned_by?.name || "",
+      t.deadline || "",
+      new Date(t.created_at).toLocaleString(),
+    ]);
+
+    const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `taskflow-report-${document.getElementById("periodSelect").value}-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("CSV downloaded.");
+  };
+</script>
+</body>
+</html>

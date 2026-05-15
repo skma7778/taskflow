@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow – Sign In</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="white" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+    </div>
+    <div class="auth-title">Welcome back</div>
+    <div class="auth-subtitle">Sign in to your TaskFlow workspace</div>
+
+    <div id="alertBox"></div>
+
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="email">Email address</label>
+        <input type="email" id="email" placeholder="you@company.com" required />
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="••••••••" required />
+      </div>
+      <button type="submit" class="btn btn-primary btn-full" id="loginBtn">
+        Sign in
+      </button>
+    </form>
+
+    <p style="margin-top:20px;text-align:center;font-size:13px;color:var(--gray-500)">
+      Don't have an account?
+      <a href="register.html" style="color:var(--primary);font-weight:600">Create one</a>
+    </p>
+  </div>
+</div>
+
+<script type="module">
+  import { supabase } from "./supabase.js";
+  import { toast } from "./app.js";
+
+  // Redirect if already logged in
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) {
+    const { data: profile } = await supabase.from("users").select("role").eq("id", session.user.id).single();
+    if (profile) window.location.href = "dashboard.html";
+  }
+
+  const form = document.getElementById("loginForm");
+  const btn  = document.getElementById("loginBtn");
+  const box  = document.getElementById("alertBox");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    box.innerHTML = "";
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Signing in…`;
+
+    const email    = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      box.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
+      btn.disabled = false;
+      btn.textContent = "Sign in";
+      return;
+    }
+
+    window.location.href = "dashboard.html";
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow – Group Chat</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="toast"></div>
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main-content">
+    <header class="topbar">
+      <button class="hamburger" id="menuToggle">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div>
+        <div class="topbar-title">Group Chat</div>
+        <div class="topbar-subtitle">Team-wide conversation — everyone can see messages</div>
+      </div>
+    </header>
+    <main class="page-content" style="padding-bottom:0">
+      <div class="group-chat-layout">
+        <!-- Header -->
+        <div class="group-chat-header">
+          <div class="group-chat-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>
+          </div>
+          <div>
+            <div style="font-weight:700;font-size:15px;color:var(--gray-900)">TaskFlow Team</div>
+            <div class="group-online-count" id="memberCount">Loading members…</div>
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <div class="group-messages" id="groupMessages">
+          <div style="text-align:center;padding:40px"><span class="spinner"></span></div>
+        </div>
+
+        <!-- Input -->
+        <div class="group-input-area">
+          <input type="text" class="chat-input" id="msgInput" placeholder="Send a message to the whole team…" />
+          <button class="btn btn-primary" id="sendBtn" onclick="sendMsg()">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+            Send
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script type="module">
+  import { supabase } from "./supabase.js";
+  import { requireAuth, buildSidebar, initMobileMenu, initNotifPopup, showNotifPopup, initials, toast } from "./app.js";
+
+  const user = await requireAuth();
+  if (!user) throw new Error();
+
+  buildSidebar(user, "groupchat.html");
+  initMobileMenu();
+  initNotifPopup(user);
+
+  // ── Member count ───────────────────────────────────────────
+  const { count: memberCount } = await supabase
+    .from("users").select("id", { count: "exact", head: true });
+  document.getElementById("memberCount").textContent = `${memberCount} team member${memberCount !== 1 ? "s" : ""}`;
+
+  // ── Load messages ──────────────────────────────────────────
+  async function loadMessages() {
+    const { data: msgs } = await supabase
+      .from("group_chat")
+      .select("*, sender:sender_id(id, name, role)")
+      .order("created_at", { ascending: true })
+      .limit(200);
+
+    const box = document.getElementById("groupMessages");
+    box.innerHTML = "";
+
+    if (!msgs || msgs.length === 0) {
+      box.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;color:var(--gray-400)">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1" style="width:52px;height:52px;opacity:.3"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>
+          <div>Be the first to say something to the team!</div>
+        </div>`;
+      return;
+    }
+
+    msgs.forEach(m => appendMessage(m, false));
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function appendMessage(msg, scroll = true) {
+    const box = document.getElementById("groupMessages");
+    if (!box) return;
+
+    const mine = msg.sender_id === user.id;
+    const senderName = msg.sender?.name || "Unknown";
+    const senderRole = msg.sender?.role || "";
+    const time = new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    const el = document.createElement("div");
+    el.className = `msg-wrapper ${mine ? "mine" : "theirs"}`;
+
+    if (mine) {
+      el.innerHTML = `
+        <div class="msg-bubble">
+          ${msg.message}
+          <div class="msg-meta">${time}</div>
+        </div>
+      `;
+    } else {
+      el.innerHTML = `
+        <div style="display:flex;align-items:flex-end;gap:8px">
+          <div class="chat-avatar" style="width:30px;height:30px;font-size:11px;flex-shrink:0;margin-bottom:4px">${initials(senderName)}</div>
+          <div>
+            <div class="msg-sender-name">${senderName} <span style="font-weight:400;color:var(--gray-400);text-transform:capitalize">${senderRole}</span></div>
+            <div class="msg-bubble">
+              ${msg.message}
+              <div class="msg-meta">${time}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    box.appendChild(el);
+    if (scroll) box.scrollTop = box.scrollHeight;
+  }
+
+  // ── Realtime subscription ──────────────────────────────────
+  supabase
+    .channel("group-chat-realtime")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "group_chat" }, async (payload) => {
+      const msg = payload.new;
+      // Fetch sender info
+      const { data: sender } = await supabase.from("users").select("id, name, role").eq("id", msg.sender_id).single();
+      msg.sender = sender;
+      appendMessage(msg);
+
+      // Show popup if someone else sent it
+      if (msg.sender_id !== user.id) {
+        showNotifPopup(`${sender?.name || "Someone"}: ${msg.message}`, "message");
+      }
+    })
+    .subscribe();
+
+  // ── Send message ───────────────────────────────────────────
+  window.sendMsg = async () => {
+    const input = document.getElementById("msgInput");
+    const text  = input?.value.trim();
+    if (!text) return;
+    input.value = "";
+
+    const { error } = await supabase.from("group_chat").insert({
+      sender_id: user.id,
+      message: text
+    });
+    if (error) toast(error.message, "error");
+  };
+
+  // Enter key to send
+  document.getElementById("msgInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+  });
+
+  loadMessages();
+</script>
+</body>
+</html>

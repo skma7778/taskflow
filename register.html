@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow – Register</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="white" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
+    </div>
+    <div class="auth-title">Create account</div>
+    <div class="auth-subtitle">Join your team on TaskFlow</div>
+
+    <div id="alertBox"></div>
+
+    <form id="registerForm">
+      <div class="form-group">
+        <label>Full name</label>
+        <input type="text" id="name" placeholder="Jane Smith" required />
+      </div>
+      <div class="form-group">
+        <label>Email address</label>
+        <input type="email" id="email" placeholder="you@company.com" required />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="password" placeholder="Min. 6 characters" required minlength="6" />
+      </div>
+      <div class="form-group">
+        <label>Role</label>
+        <select id="role" required>
+          <option value="">Select your role</option>
+          <option value="employee">Employee</option>
+          <option value="manager">Manager</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-full" id="regBtn">Create account</button>
+    </form>
+
+    <p style="margin-top:20px;text-align:center;font-size:13px;color:var(--gray-500)">
+      Already have an account? <a href="index.html" style="color:var(--primary);font-weight:600">Sign in</a>
+    </p>
+  </div>
+</div>
+
+<script type="module">
+  import { supabase } from "./supabase.js";
+
+  const form = document.getElementById("registerForm");
+  const btn  = document.getElementById("regBtn");
+  const box  = document.getElementById("alertBox");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    box.innerHTML = "";
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Creating…`;
+
+    const name     = document.getElementById("name").value.trim();
+    const email    = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const role     = document.getElementById("role").value;
+
+    if (!role) {
+      box.innerHTML = `<div class="alert alert-error">Please select a role.</div>`;
+      btn.disabled = false; btn.textContent = "Create account";
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({ email, password });
+
+    if (error) {
+      box.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
+      btn.disabled = false; btn.textContent = "Create account";
+      return;
+    }
+
+    // Insert into users table
+    await supabase.from("users").insert({ id: data.user.id, name, email, role });
+
+    box.innerHTML = `<div class="alert alert-success">Account created! Redirecting…</div>`;
+    setTimeout(() => window.location.href = "dashboard.html", 1200);
+  });
+</script>
+</body>
+</html>

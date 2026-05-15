@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow – Tasks</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="toast"></div>
+
+<!-- Create / Edit Task Modal -->
+<div class="modal-overlay" id="taskModal">
+  <div class="modal">
+    <div class="modal-title" id="modalTitle">New Task</div>
+    <div class="modal-subtitle" id="modalSubtitle">Fill in the details below</div>
+    <form id="taskForm">
+      <input type="hidden" id="taskId" />
+      <div class="form-group">
+        <label>Title <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="taskTitle" placeholder="e.g. Design homepage mockup" required />
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="taskDesc" placeholder="Optional details…"></textarea>
+      </div>
+      <div class="form-group" id="assigneeGroup">
+        <label>Assign to</label>
+        <select id="taskAssignee"><option value="">— Unassigned —</option></select>
+      </div>
+      <div class="form-group">
+        <label>Deadline</label>
+        <input type="date" id="taskDeadline" />
+      </div>
+      <div class="form-group" id="statusGroup" style="display:none">
+        <label>Status</label>
+        <select id="taskStatus">
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="saveBtn">Save Task</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- File upload modal -->
+<div class="modal-overlay" id="fileModal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-title">Upload File</div>
+    <div class="modal-subtitle">Attach a file to this task</div>
+    <input type="hidden" id="fileTaskId" />
+    <div class="form-group">
+      <label>Choose file</label>
+      <input type="file" id="fileInput" />
+    </div>
+    <div id="fileList" style="margin-top:12px;font-size:13px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeFileModal()">Close</button>
+      <button class="btn btn-primary" id="uploadBtn" onclick="uploadFile()">Upload</button>
+    </div>
+  </div>
+</div>
+
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main-content">
+    <header class="topbar">
+      <button class="hamburger" id="menuToggle">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div>
+        <div class="topbar-title">Tasks</div>
+        <div class="topbar-subtitle">Manage and track all tasks</div>
+      </div>
+    </header>
+    <main class="page-content">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <div class="search-box">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input type="text" id="searchInput" placeholder="Search tasks…" />
+          </div>
+          <select id="filterStatus" style="width:140px;padding:10px 12px">
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+        <div>
+          <button class="btn btn-primary hidden" id="newTaskBtn" onclick="openModal()">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+            New Task
+          </button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Task</th>
+              <th>Status</th>
+              <th>Assigned To</th>
+              <th>Deadline</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tasksBody">
+            <tr><td colspan="5" style="text-align:center;padding:40px"><span class="spinner"></span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script type="module">
+  import { supabase } from "./supabase.js";
+  import { requireAuth, buildSidebar, initMobileMenu, initNotifPopup, statusBadge, formatDate, toast } from "./app.js";
+
+  window._supabase = supabase;
+  window._toast    = toast;
+
+  const user = await requireAuth();
+  if (!user) throw new Error();
+
+  buildSidebar(user, "tasks.html");
+  initMobileMenu();
+  initNotifPopup(user);
+
+  // Show new-task button for admin/manager
+  if (user.role !== "employee") document.getElementById("newTaskBtn").classList.remove("hidden");
+
+  // Pre-populate assignees in modal
+  if (user.role !== "employee") {
+    const { data: employees } = await supabase.from("users").select("id,name").in("role", ["employee","manager"]);
+    const sel = document.getElementById("taskAssignee");
+    employees?.forEach(e => { const o = new Option(e.name, e.id); sel.appendChild(o); });
+  } else {
+    document.getElementById("assigneeGroup").style.display = "none";
+  }
+
+  // ── Load tasks ─────────────────────────────────────────────
+  window.allTasks = [];
+  window._taskMap = {};
+
+  async function loadTasks() {
+    let query = supabase.from("tasks")
+      .select("id, title, description, status, deadline, created_at, assigned_to(id,name), assigned_by(id,name)")
+      .order("created_at", { ascending: false });
+
+    if (user.role === "employee") query = query.eq("assigned_to", user.id);
+
+    const { data } = await query;
+    window.allTasks = data || [];
+    window._taskMap = {};
+    window.allTasks.forEach(t => { window._taskMap[t.id] = t; });
+    renderTasks(window.allTasks);
+  }
+
+  function renderTasks(tasks) {
+    const tbody = document.getElementById("tasksBody");
+    if (!tasks.length) {
+      tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg><div class="empty-title">No tasks found</div><div class="empty-text">Create a task to get started.</div></div></td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = tasks.map(t => `
+      <tr>
+        <td>
+          <div style="font-weight:600;color:var(--gray-900)">${t.title}</div>
+          ${t.description ? `<div style="font-size:12px;color:var(--gray-500);margin-top:4px;max-width:400px;line-height:1.4;word-wrap:break-word;white-space:pre-wrap">${escapeHtml(t.description)}</div>` : ""}
+        </td>
+        <td>
+          ${user.role === "employee"
+            ? `<select class="status-select" onchange="changeStatus('${t.id}', this.value)">
+                 <option value="pending" ${t.status==="pending"?"selected":""}>Pending</option>
+                 <option value="in_progress" ${t.status==="in_progress"?"selected":""}>In Progress</option>
+                 <option value="completed" ${t.status==="completed"?"selected":""}>Completed</option>
+               </select>`
+            : statusBadge(t.status)}
+        </td>
+        <td>${t.assigned_to?.name || "<span style='color:var(--gray-400)'>Unassigned</span>"}</td>
+        <td>${formatDate(t.deadline)}</td>
+        <td>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-outline btn-sm" onclick="openFileModal('${t.id}')">Files</button>
+            ${user.role !== "employee" ? `
+              <button class="btn btn-outline btn-sm" onclick="editTask('${t.id}')">Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteTask('${t.id}')">Del</button>
+            ` : ""}
+          </div>
+        </td>
+      </tr>
+    `).join("");
+  }
+
+  // HTML escape function for security
+  function escapeHtml(text) {
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+  }
+
+  // ── Filters ────────────────────────────────────────────────
+  function applyFilters() {
+    const q   = document.getElementById("searchInput").value.toLowerCase();
+    const st  = document.getElementById("filterStatus").value;
+    const filtered = window.allTasks.filter(t =>
+      (!q  || t.title.toLowerCase().includes(q) || (t.description||"").toLowerCase().includes(q)) &&
+      (!st || t.status === st)
+    );
+    renderTasks(filtered);
+  }
+  document.getElementById("searchInput").addEventListener("input", applyFilters);
+  document.getElementById("filterStatus").addEventListener("change", applyFilters);
+
+  // ── Modal helpers ──────────────────────────────────────────
+  window.openModal  = (task = null) => {
+    document.getElementById("taskId").value       = task?.id || "";
+    document.getElementById("taskTitle").value    = task?.title || "";
+    document.getElementById("taskDesc").value     = task?.description || "";
+    document.getElementById("taskAssignee").value = task?.assigned_to?.id || "";
+    document.getElementById("taskDeadline").value = task?.deadline || "";
+    document.getElementById("taskStatus").value   = task?.status || "pending";
+    document.getElementById("statusGroup").style.display = task ? "" : "none";
+    document.getElementById("modalTitle").textContent   = task ? "Edit Task" : "New Task";
+    document.getElementById("modalSubtitle").textContent = task ? "Update task details" : "Fill in the details below";
+    document.getElementById("taskModal").classList.add("open");
+  };
+  window.closeModal = () => document.getElementById("taskModal").classList.remove("open");
+  window.editTask   = (id) => openModal(window._taskMap[id]);
+
+  // ── Save task ──────────────────────────────────────────────
+  document.getElementById("taskForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn  = document.getElementById("saveBtn");
+    btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>`;
+
+    const id       = document.getElementById("taskId").value;
+    const payload  = {
+      title:       document.getElementById("taskTitle").value.trim(),
+      description: document.getElementById("taskDesc").value.trim() || null,
+      assigned_to: document.getElementById("taskAssignee").value || null,
+      deadline:    document.getElementById("taskDeadline").value || null,
+      status:      document.getElementById("taskStatus").value,
+    };
+
+    let err;
+    if (id) {
+      ({ error: err } = await supabase.from("tasks").update(payload).eq("id", id));
+    } else {
+      payload.assigned_by = user.id;
+      payload.status = "pending";
+      ({ error: err } = await supabase.from("tasks").insert(payload));
+
+      // Notify assigned user + show popup to them via realtime
+      if (payload.assigned_to) {
+        await supabase.from("notifications").insert({
+          user_id: payload.assigned_to,
+          message: `You've been assigned a new task: "${payload.title}"`,
+          is_read: false
+        });
+      }
+    }
+
+    btn.disabled = false; btn.textContent = "Save Task";
+    if (err) { toast(err.message, "error"); return; }
+    toast(id ? "Task updated." : "Task created.");
+    closeModal();
+    loadTasks();
+  });
+
+  // ── Delete task ────────────────────────────────────────────
+  window.deleteTask = async (id) => {
+    if (!confirm("Delete this task?")) return;
+    await supabase.from("tasks").delete().eq("id", id);
+    toast("Task deleted.");
+    loadTasks();
+  };
+
+  // ── Change status (employee) ───────────────────────────────
+  window.changeStatus = async (id, status) => {
+    await supabase.from("tasks").update({ status }).eq("id", id);
+    // Notify assigner
+    const { data: t } = await supabase.from("tasks").select("title, assigned_by").eq("id", id).single();
+    if (t?.assigned_by) {
+      await supabase.from("notifications").insert({
+        user_id: t.assigned_by,
+        message: `Task "${t.title}" status changed to ${status.replace("_", " ")}`,
+        is_read: false
+      });
+    }
+    toast("Status updated.");
+  };
+
+  // ── File upload modal ──────────────────────────────────────
+  window.openFileModal = async (taskId) => {
+    document.getElementById("fileTaskId").value = taskId;
+    document.getElementById("fileModal").classList.add("open");
+    const { data: files } = await supabase.from("files").select("*").eq("task_id", taskId);
+    const el = document.getElementById("fileList");
+    el.innerHTML = files?.length
+      ? files.map(f => `<div style="padding:8px 0;border-bottom:1px solid var(--gray-100);display:flex;justify-content:space-between;align-items:center"><a href="${f.file_url}" target="_blank" download style="color:var(--primary);font-size:13px;text-decoration:none;flex:1">${f.file_url.split("/").pop()}</a><button class="btn btn-sm btn-outline" onclick="deleteFile('${f.id}')">Delete</button></div>`).join("")
+      : "<div style='color:var(--gray-400)'>No files attached yet.</div>";
+  };
+  window.closeFileModal = () => document.getElementById("fileModal").classList.remove("open");
+
+  window.uploadFile = async () => {
+    const file   = document.getElementById("fileInput").files[0];
+    const taskId = document.getElementById("fileTaskId").value;
+    if (!file) { toast("Choose a file first.", "error"); return; }
+
+    const btn = document.getElementById("uploadBtn");
+    btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>`;
+
+    const path = `${taskId}/${Date.now()}_${file.name}`;
+    const { error: upErr } = await supabase.storage.from("task-files").upload(path, file);
+    if (upErr) { toast(upErr.message, "error"); btn.disabled = false; btn.textContent = "Upload"; return; }
+
+    const { data: { publicUrl } } = supabase.storage.from("task-files").getPublicUrl(path);
+    await supabase.from("files").insert({ task_id: taskId, file_url: publicUrl, uploaded_by: user.id });
+
+    toast("File uploaded.");
+    btn.disabled = false; btn.textContent = "Upload";
+    document.getElementById("fileInput").value = "";
+    openFileModal(taskId);
+  };
+
+  window.deleteFile = async (fileId) => {
+    if (!confirm("Delete this file?")) return;
+    await supabase.from("files").delete().eq("id", fileId);
+    toast("File deleted.");
+    const taskId = document.getElementById("fileTaskId").value;
+    openFileModal(taskId);
+  };
+
+  loadTasks();
+</script>
+</body>
+</html>
